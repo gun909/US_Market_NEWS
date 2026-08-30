@@ -1,0 +1,13 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.env
+dist/
+build/
+*.egg-info/
+install_log.txt
+# The GitHub workflow force-adds this file so delivery history survives runners.
+data/*.db-journal
+data/*.db-shm
+data/*.db-wal
