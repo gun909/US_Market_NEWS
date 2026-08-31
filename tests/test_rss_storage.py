@@ -38,9 +38,11 @@ class RssAndStorageTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = Path(directory) / "macropulse.db"
             store = HistoryStore(database)
+            self.assertEqual(store.unsent(items), items)
             self.assertEqual(store.latest_unsent(items), items[0])
             store.record_delivery(items[0], report, success=True)
             self.assertTrue(store.was_sent(items[0].fingerprint))
+            self.assertEqual(store.unsent(items), (items[1],))
             self.assertEqual(store.latest_unsent(items), items[1])
 
     def test_failed_delivery_remains_retryable(self):

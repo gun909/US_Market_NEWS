@@ -27,6 +27,24 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(report.analysis.sentiment, "neutral")
         self.assertTrue(all(check.expected is None for check in report.checks))
         self.assertEqual(report.confidence, "LOW")
+        self.assertIn("LOW confidence neutral alert", format_text(report))
+
+    def test_geopolitical_oil_news_lists_positive_and_negative_assets(self):
+        headline = "Dow Jones Futures Fall, Oil Prices Pop As U.S. Strikes Iran"
+        report = MacroPulseEngine().run(headline, DemoMarketDataProvider())
+        self.assertEqual(report.analysis.event_type, "geopolitical_oil_shock")
+        self.assertIn("XLE", report.analysis.positive)
+        self.assertIn("SPY", report.analysis.negative)
+        text = format_text(report)
+        self.assertIn("Positive correlation:", text)
+        self.assertIn("Negative correlation:", text)
+
+    def test_publisher_acronym_is_not_treated_as_ticker(self):
+        headline = "US-Iran War - Five Key Factors That May Drive Markets - NDTV Profit"
+        result = RuleBasedNewsAnalyzer().analyze(headline)
+        self.assertNotIn("NDTV", result.affected)
+        self.assertIn("XLE", result.positive)
+        self.assertIn("QQQ", result.negative)
 
     def test_text_output_contains_all_sections(self):
         report = MacroPulseEngine().run("Fed unexpectedly cuts rates", DemoMarketDataProvider())
