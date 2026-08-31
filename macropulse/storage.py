@@ -52,7 +52,19 @@ class HistoryStore:
         return bool(row and row["success"])
 
     def latest_unsent(self, items: tuple[FeedItem, ...]) -> FeedItem | None:
-        return next((item for item in items if not self.was_sent(item.fingerprint)), None)
+        return next(iter(self.unsent(items)), None)
+
+    def unsent(self, items: tuple[FeedItem, ...]) -> tuple[FeedItem, ...]:
+        if not items:
+            return ()
+        with closing(self._connect()) as connection:
+            sent = {
+                row["fingerprint"]
+                for row in connection.execute(
+                    "SELECT fingerprint FROM deliveries WHERE success = 1"
+                ).fetchall()
+            }
+        return tuple(item for item in items if item.fingerprint not in sent)
 
     def record_delivery(
         self,

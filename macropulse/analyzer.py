@@ -12,7 +12,8 @@ class EventRule:
     patterns: tuple[str, ...]
     sentiment: str
     thesis: str
-    affected: tuple[str, ...]
+    positive: tuple[str, ...]
+    negative: tuple[str, ...]
     strength: float
 
 
@@ -23,6 +24,7 @@ EVENT_RULES = (
         "bullish",
         "Bullish for growth stocks",
         ("QQQ", "NVDA", "MSFT", "AMZN"),
+        (),
         0.88,
     ),
     EventRule(
@@ -30,6 +32,7 @@ EVENT_RULES = (
         (r"\bfed(?:eral reserve)?\b.*\b(hike|hikes|raise|raises)\b.*\brate", r"\brate hike\b"),
         "bearish",
         "Bearish for rate-sensitive growth stocks",
+        (),
         ("QQQ", "NVDA", "MSFT", "AMZN"),
         0.88,
     ),
@@ -39,6 +42,7 @@ EVENT_RULES = (
         "bullish",
         "Lower inflation supports risk assets",
         ("SPY", "QQQ", "IWM"),
+        (),
         0.78,
     ),
     EventRule(
@@ -46,6 +50,7 @@ EVENT_RULES = (
         (r"\b(cpi|inflation)\b.*\b(rises|jumps|accelerates|hotter|above)\b",),
         "bearish",
         "Higher inflation pressures risk assets",
+        (),
         ("SPY", "QQQ", "IWM"),
         0.78,
     ),
@@ -55,6 +60,7 @@ EVENT_RULES = (
         "bullish",
         "Positive earnings surprise",
         (),
+        (),
         0.72,
     ),
     EventRule(
@@ -63,12 +69,62 @@ EVENT_RULES = (
         "bearish",
         "Negative earnings surprise",
         (),
+        (),
         0.72,
+    ),
+    EventRule(
+        "geopolitical_oil_shock",
+        (
+            r"\boil\b.*\b(pop|pops|jump|jumps|surge|surges|rise|rises|spike|spikes|higher)\b",
+            r"\b(iran|middle east)\b.*\b(strike|strikes|attack|attacks|war|conflict)\b",
+            r"\b(strike|strikes|attack|attacks|war|conflict)\b.*\b(iran|middle east)\b",
+        ),
+        "bearish",
+        "Geopolitical market noise: energy and defense may benefit while broad equities and travel face pressure",
+        ("XLE", "XOM", "CVX", "LMT", "NOC"),
+        ("SPY", "QQQ", "JETS"),
+        0.76,
+    ),
+    EventRule(
+        "oil_price_drop",
+        (r"\boil\b.*\b(fall|falls|drop|drops|plunge|plunges|lower)\b",),
+        "bullish",
+        "Lower oil prices may support travel and consumers while pressuring energy shares",
+        ("JETS", "XLY"),
+        ("XLE", "XOM", "CVX"),
+        0.68,
+    ),
+    EventRule(
+        "trade_or_tariff_risk",
+        (r"\b(tariff|tariffs|trade war|sanction|sanctions)\b",),
+        "bearish",
+        "Trade-policy market noise may support defensive assets and pressure risk assets",
+        ("GLD", "XLU"),
+        ("SPY", "QQQ", "IWM"),
+        0.68,
+    ),
+    EventRule(
+        "market_decline",
+        (
+            r"\b(futures|stocks?|market|dow jones|s&p 500|nasdaq)\b.*\b(fall|falls|drop|drops|decline|declines|selloff)\b",
+            r"\b(decline|fall|selloff)\b.*\b(futures|stocks?|market|dow jones|s&p 500|nasdaq)\b",
+        ),
+        "bearish",
+        "Broad-market weakness is a negative risk signal",
+        ("GLD",),
+        ("SPY", "QQQ", "IWM"),
+        0.64,
     ),
 )
 
 TICKER_RE = re.compile(r"(?<![A-Za-z])(?:\$([A-Z]{1,5})|([A-Z]{2,5}))(?![A-Za-z])")
 TICKER_STOPWORDS = {"A", "AI", "CEO", "CPI", "ETF", "FED", "GDP", "SEC", "US", "USA"}
+KNOWN_TICKERS = {
+    "AAPL", "AMZN", "AMD", "AVGO", "BA", "BAC", "BRK", "COIN", "CVX", "DIA", "GLD",
+    "GOOG", "GOOGL", "GS", "IWM", "JETS", "JPM", "LMT", "META", "MSFT", "NFLX", "NOC",
+    "NVDA", "QQQ", "SMH", "SPY", "TSLA", "TSM", "UNG", "USO", "XLE", "XLF", "XLU", "XLY",
+    "XOM",
+}
 
 
 class RuleBasedNewsAnalyzer:
@@ -84,11 +140,23 @@ class RuleBasedNewsAnalyzer:
             (rule for rule in EVENT_RULES if any(re.search(pattern, lower) for pattern in rule.patterns)),
             None,
         )
-        candidates = (prefixed or bare for prefixed, bare in TICKER_RE.findall(clean))
-        explicit = tuple(dict.fromkeys(ticker for ticker in candidates if ticker not in TICKER_STOPWORDS))
+        explicit = tuple(
+            dict.fromkeys(
+                prefixed or bare
+                for prefixed, bare in TICKER_RE.findall(clean)
+                if prefixed or (bare in KNOWN_TICKERS and bare not in TICKER_STOPWORDS)
+            )
+        )
 
         if rule:
-            affected = explicit or rule.affected
+            positive = rule.positive
+            negative = rule.negative
+            if explicit and not (rule.positive and rule.negative):
+                if rule.sentiment == "bullish":
+                    positive = explicit
+                elif rule.sentiment == "bearish":
+                    negative = explicit
+            affected = tuple(dict.fromkeys((*positive, *negative)))
             return NewsAnalysis(
                 clean,
                 rule.sentiment,  # type: ignore[arg-type]
@@ -96,6 +164,8 @@ class RuleBasedNewsAnalyzer:
                 affected,
                 rule.name,
                 rule.strength,
+                positive,
+                negative,
             )
 
         positive = sum(word in lower for word in ("surges", "rallies", "upgrade", "approval", "record high"))
@@ -106,7 +176,18 @@ class RuleBasedNewsAnalyzer:
             "bearish": "Negative market catalyst",
             "neutral": "No strong directional catalyst detected",
         }[sentiment]
-        return NewsAnalysis(clean, sentiment, thesis, explicit, "unclassified", 0.55 if sentiment != "neutral" else 0.35)  # type: ignore[arg-type]
+        positive_assets = explicit if sentiment == "bullish" else ()
+        negative_assets = explicit if sentiment == "bearish" else ()
+        return NewsAnalysis(
+            clean,
+            sentiment,  # type: ignore[arg-type]
+            thesis,
+            explicit,
+            "unclassified",
+            0.55 if sentiment != "neutral" else 0.35,
+            positive_assets,
+            negative_assets,
+        )
 
 
 class FinBertNewsAnalyzer:
@@ -125,6 +206,11 @@ class FinBertNewsAnalyzer:
         result = self._classifier(headline, truncation=True)[0]
         label = str(result["label"]).lower()
         sentiment = {"positive": "bullish", "negative": "bearish"}.get(label, "neutral")
+        positive = base.positive
+        negative = base.negative
+        if base.event_type == "unclassified" and base.affected:
+            positive = base.affected if sentiment == "bullish" else ()
+            negative = base.affected if sentiment == "bearish" else ()
         return NewsAnalysis(
             base.headline,
             sentiment,  # type: ignore[arg-type]
@@ -132,4 +218,6 @@ class FinBertNewsAnalyzer:
             base.affected,
             base.event_type,
             float(result["score"]),
+            positive,
+            negative,
         )

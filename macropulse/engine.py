@@ -14,7 +14,8 @@ class MacroPulseEngine:
         checks = build_market_checks(analysis, market)
         known = [check.confirms for check in checks if check.confirms is not None]
         confirmation = sum(known) / len(known) if known else 0.0
+        if analysis.sentiment == "neutral":
+            return AlertReport(analysis, checks, "LOW", round(0.55 * analysis.score, 3))
         score = round(0.55 * analysis.score + 0.45 * confirmation, 3)
         confidence = "HIGH" if score >= 0.78 else "MEDIUM" if score >= 0.58 else "LOW"
         return AlertReport(analysis, checks, confidence, score)
-

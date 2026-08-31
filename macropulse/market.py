@@ -29,7 +29,12 @@ class DemoMarketDataProvider:
 
 
 class YFinanceMarketDataProvider:
+    def __init__(self) -> None:
+        self._cache: dict[tuple[str, ...], dict[str, QuoteChange]] = {}
+
     def changes(self, symbols: tuple[str, ...]) -> dict[str, QuoteChange]:
+        if symbols in self._cache:
+            return self._cache[symbols]
         try:
             import yfinance as yf
         except ImportError as exc:
@@ -45,6 +50,7 @@ class YFinanceMarketDataProvider:
             price_pct = _pct_change(float(previous["Close"]), float(latest["Close"]))
             volume_pct = _pct_change(float(previous["Volume"]), float(latest["Volume"]))
             results[symbol] = QuoteChange(price_pct, volume_pct)
+        self._cache[symbols] = results
         return results
 
 

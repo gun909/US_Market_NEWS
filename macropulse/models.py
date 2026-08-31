@@ -15,6 +15,8 @@ class NewsAnalysis:
     affected: tuple[str, ...]
     event_type: str
     score: float
+    positive: tuple[str, ...] = ()
+    negative: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -42,4 +44,3 @@ class AlertReport:
 
     def to_dict(self) -> dict:
         return asdict(self)
-
