@@ -12,7 +12,15 @@ from .market import DemoMarketDataProvider, YFinanceMarketDataProvider
 from .models import AlertReport
 from .rss import DEFAULT_RSS_URL, FeedItem, fetch_feed
 from .storage import HistoryStore
-from .telegram import send_telegram
+from .telegram import fetch_telegram_updates, send_telegram, split_telegram_text
+
+
+BOT_HELP = (
+    "MacroPulse commands:\n"
+    "/high - all HIGH confidence bearish alerts\n"
+    "/medium - all MEDIUM confidence alerts\n"
+    "/help - show this help"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -37,20 +45,70 @@ def _with_source(report: AlertReport, item: FeedItem | None) -> str:
     return f"{text}\n\nSource:\n{item.link}" if item else text
 
 
+def _format_query_rows(title: str, rows: tuple[dict[str, str], ...]) -> str:
+    if not rows:
+        return f"{title}\n\nNo matching records in data/macropulse.db."
+    records = []
+    for index, row in enumerate(rows, 1):
+        records.append(
+            f"[{index}] {row['time']}\n"
+            f"Confidence: {row['confidence']}\n"
+            f"Direction: {row['sentiment']}\n"
+            f"News: {row['title']}\n"
+            f"Affected: {row['affected']}\n"
+            f"Source: {row['link']}"
+        )
+    return f"{title}\nRows: {len(rows)}\n\n" + "\n\n".join(records)
+
+
+def _process_bot_commands(store: HistoryStore, token: str, chat_id: str) -> None:
+    offset = int(store.get_state("telegram_update_offset", "0") or 0)
+    updates = fetch_telegram_updates(token, offset)
+    for update in updates:
+        next_offset = int(update.get("update_id", 0)) + 1
+        message = update.get("message") or {}
+        incoming_chat = str((message.get("chat") or {}).get("id", ""))
+        command = str(message.get("text", "")).strip().split(maxsplit=1)[0].lower()
+        command = command.split("@", 1)[0]
+        if incoming_chat == str(chat_id):
+            if command in {"/high", "/high_bearish"}:
+                rows = store.query_alerts(confidence="HIGH", sentiment="bearish")
+                reply = _format_query_rows("HIGH bearish alerts", rows)
+            elif command == "/medium":
+                rows = store.query_alerts(confidence="MEDIUM")
+                reply = _format_query_rows("MEDIUM confidence alerts", rows)
+            elif command in {"/help", "/start"}:
+                reply = BOT_HELP
+            else:
+                reply = ""
+            for chunk in split_telegram_text(reply) if reply else ():
+                send_telegram(token, chat_id, chunk)
+        store.set_state("telegram_update_offset", str(next_offset))
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.latest and args.news:
         parser.error("use either a news headline or --latest, not both")
 
+    token = os.environ.get("TELEGRAM_BOT_TOKEN")
+    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
+    if args.telegram and (not token or not chat_id):
+        raise SystemExit("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
+
     store: HistoryStore | None = None
     feed_items: tuple[FeedItem, ...] = ()
     if args.latest:
         store = HistoryStore(args.database)
+        if args.telegram:
+            try:
+                _process_bot_commands(store, token or "", chat_id or "")
+            except Exception as exc:
+                print(f"Telegram command polling failed: {exc}", file=sys.stderr)
         feed_items = store.unsent(fetch_feed(args.rss_url))
         if not feed_items:
             print("No unsent RSS news found.")
-            return 0
         work: tuple[tuple[FeedItem | None, str], ...] = tuple(
             (item, item.title) for item in feed_items
         )
@@ -60,11 +118,6 @@ def main(argv: list[str] | None = None) -> int:
             parser.error("provide a news headline, pipe stdin, or use --latest")
         work = ((None, news),)
 
-    token = os.environ.get("TELEGRAM_BOT_TOKEN")
-    chat_id = os.environ.get("TELEGRAM_CHAT_ID")
-    if args.telegram and (not token or not chat_id):
-        raise SystemExit("TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID are required")
-
     analyzer = FinBertNewsAnalyzer() if args.analyzer == "finbert" else RuleBasedNewsAnalyzer()
     market = YFinanceMarketDataProvider() if args.market == "yfinance" else DemoMarketDataProvider()
     engine = MacroPulseEngine(analyzer)
@@ -72,15 +125,19 @@ def main(argv: list[str] | None = None) -> int:
 
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
-    if args.json:
+    if args.json and reports:
         payload = [report.to_dict() for _, report in reports]
         print(json.dumps(payload if args.latest else payload[0], ensure_ascii=False, indent=2))
-    else:
+    elif reports:
         print("\n\n---\n\n".join(_with_source(report, item) for item, report in reports))
 
     errors: list[str] = []
     if args.telegram:
         for item, report in reports:
+            if report.confidence == "LOW" and report.analysis.sentiment == "neutral":
+                if store and item:
+                    store.record_delivery(item, report, success=True, notified=False)
+                continue
             try:
                 send_telegram(token or "", chat_id or "", _with_source(report, item))
             except Exception as exc:
