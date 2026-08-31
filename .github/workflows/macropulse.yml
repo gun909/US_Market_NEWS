@@ -2,7 +2,7 @@ name: MacroPulse RSS Monitor
 
 on:
   schedule:
-    - cron: "7,37 * * * *"
+  - cron: "*/5 * * * *"
   workflow_dispatch:
 
 permissions:
