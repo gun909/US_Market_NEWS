@@ -35,10 +35,11 @@ jobs:
       - name: Install MacroPulse
         run: python -m pip install -e ".[market]"
 
-      - name: Analyze latest unsent RSS article and notify Telegram
+      - name: Analyze all unsent RSS articles and notify Telegram
         run: python -m macropulse --latest --market yfinance --telegram
 
       - name: Persist delivery history in the private repository
+        if: always()
         shell: bash
         run: |
           if [[ ! -f data/macropulse.db ]]; then
@@ -53,4 +54,3 @@ jobs:
           git commit -m "chore: update MacroPulse delivery history"
           git pull --rebase origin "${GITHUB_REF_NAME}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
-
