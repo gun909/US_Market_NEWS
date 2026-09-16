@@ -7,6 +7,7 @@ MacroPulse 的自动处理链路：
              → QQQ 成交量 + VIX + 10 年期收益率验证
              → Telegram 预警 → SQLite 去重历史
 ```
+<img width="889" height="1920" alt="dad37a6c25928fbebc7884824fd27fe6" src="https://github.com/user-attachments/assets/0c11863e-ef21-42a1-862f-b46d3656b1d4" />
 
 ## 本地快速运行
 
